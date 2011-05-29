@@ -16,19 +16,30 @@ module DataMapper
           super
         end
 
-        # @api public
-        def before(target_method, method_sym = nil, &block)
-          setup_hook(:before, target_method, method_sym, block) { super }
+        # The interceptors bound to the receiver
+        # 
+        # @api semipublic
+        # 
+        # TODO: rename #listeners?
+        def interceptors
+          @interceptors ||= OrderedSet.new
         end
 
         # @api public
-        def after(target_method, method_sym = nil, &block)
-          setup_hook(:after, target_method, method_sym, block) { super }
+        def before(target_method, method_or_interceptor = nil, options = {}, &block)
+          setup_hook(:before, target_method, method_or_interceptor, options, block) { super }
+        end
+
+        # @api public
+        def after(target_method, method_or_interceptor = nil, options = {}, &block)
+          setup_hook(:after, target_method, method_or_interceptor, options, block) { super }
         end
 
         # @api private
         def hooks
           @hooks ||= {
+            # contemplate subsuming discriminator into a `before :load` interceptor
+            # :load     => { :before => [], :after => [] },
             :save     => { :before => [], :after => [] },
             :create   => { :before => [], :after => [] },
             :update   => { :before => [], :after => [] },
@@ -38,22 +49,40 @@ module DataMapper
 
       private
 
-        def setup_hook(type, name, method, proc)
+        # @param [Symbol] type
+        #   one of :before or :after
+        # @param [Symbol] name
+        #   one of :save, :create, :update or :destroy
+        # @param [Symbol, DataMapper::Model::Hook::Interceptor] method_or_interceptor
+        #   either a method name to call back, or an interceptor that
+        #   responds to the specified name/type (occurrence/preposition) pair
+        # @param [Hash] options
+        #   if +method_or_interceptor+ is a subclass of Interceptor, +options+ will be
+        #   passed to +method_or_interceptor#initialize+
+        # 
+        # @api private
+        def setup_hook(type, name, method_or_interceptor, options, proc)
           types = hooks[name]
           if types && types[type]
-            types[type] << if proc
-              ProcCommand.new(proc)
-            else
-              MethodCommand.new(self, method)
-            end
+            types[type] <<
+              if method_or_interceptor < DataMapper::Interceptor
+                listener = method_or_interceptor.new(self, name, type, options, &proc)
+                self.listeners << listener
+                listener
+              elsif proc
+                ProcCommand.new(proc)
+              else
+                MethodCommand.new(self, method_or_interceptor)
+              end
           else
             yield
           end
         end
 
         # deep copy hooks from the parent model
+        # TODO: shouldn't this be an eager copy instead of a lazy one?
         def copy_hooks(model)
-          hooks = Hash.new do |hooks, name|
+          hooks_copy = Hash.new do |hooks, name|
             hooks[name] = Hash.new do |types, type|
               if self.hooks[name]
                 types[type] = self.hooks[name][type].map do |command|
@@ -63,7 +92,7 @@ module DataMapper
             end
           end
 
-          model.instance_variable_set(:@hooks, hooks)
+          model.instance_variable_set(:@hooks, hooks_copy)
         end
 
       end

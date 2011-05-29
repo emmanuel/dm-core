@@ -81,6 +81,8 @@ require 'dm-core/property/discriminator'
 require 'dm-core/property/lookup'
 require 'dm-core/property_set'
 
+require 'dm-core/interceptor'
+
 require 'dm-core/model'
 require 'dm-core/model/hook'
 require 'dm-core/model/is'
