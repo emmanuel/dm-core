@@ -26,7 +26,13 @@ module DataMapper
       attr_reader :relationships
 
       # @api semipublic
-      attr_reader :model
+      attr_reader :source_model
+
+      # @api semipublic
+      attr_reader :target_model
+
+      # @api semipublic
+      alias_method :model, :target_model
 
       # @api semipublic
       attr_reader :property
@@ -70,8 +76,8 @@ module DataMapper
       def respond_to?(method, include_private = false)
         super                                                                   ||
         (defined?(@property) && @property.respond_to?(method, include_private)) ||
-        @model.relationships(@repository_name).named?(method)                   ||
-        @model.properties(@repository_name).named?(method)
+        target_model_relationships.named?(method)                               ||
+        target_model_properties.named?(method)
       end
 
       def wrap(subject)
@@ -85,21 +91,37 @@ module DataMapper
         end
       end
 
-      private
+    private
 
       # @api semipublic
       def initialize(relationships, property_name = nil)
         @relationships = relationships.to_ary.dup
 
+        first_relationship = @relationships.first
+        @source_model      = first_relationship.source_model
+
         last_relationship = @relationships.last
         @repository_name  = last_relationship.relative_target_repository_name
-        @model            = last_relationship.target_model
+        @target_model     = last_relationship.target_model
 
+        set_property(property_name)
+      end
+
+      def set_property(property_name)
         if property_name
           property_name = property_name.to_sym
-          @property = @model.properties(@repository_name)[property_name] ||
-            raise(ArgumentError, "Unknown property '#{property_name}' in #{@model}")
+          @property = target_model_properties[property_name] ||
+            raise(ArgumentError, "Unknown property '#{property_name}' in #{@target_model}")
         end
+        self
+      end
+
+      def target_model_relationships
+        @target_model.relationships(@repository_name)
+      end
+
+      def target_model_properties
+        @target_model.properties(@repository_name)
       end
 
       # @api semipublic
@@ -110,23 +132,30 @@ module DataMapper
 
         path_class = self.class
 
-        if relationship = @model.relationships(@repository_name)[method]
+        if relationship = target_model_relationships[method]
           return path_class.new(@relationships.dup << relationship)
         end
 
-        if @model.properties(@repository_name).named?(method)
+        if target_model_properties.named?(method)
           return path_class.new(@relationships, method)
         end
 
-        raise NoMethodError, "undefined property or relationship '#{method}' on #{@model}"
+        raise NoMethodError, "undefined property or relationship '#{method}' on #{@target_model}"
       end
 
       class Empty < self
+        # Path::Empty is for subjects on the source Model itself,
+        # so the target_model and source_model are the same
+        alias_method :source_model, :target_model
+
       private
+
         def initialize(model, property_name = nil)
-          @relationships    = []
-          @model            = model
-          @repository_name  = model.repository_name
+          @relationships   = []
+          @target_model    = model
+          @repository_name = model.repository_name
+
+          set_property(property_name)
         end
       end
     end # class Path
