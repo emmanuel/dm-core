@@ -1143,13 +1143,16 @@ module DataMapper
     #   the Query conditions
     #
     # @api private
-    def append_condition(subject, bind_value, model = self.model, operator = :eql)
+    def append_condition(subject, bind_value, operator = :eql, path = nil)
+      path ||= Path::Empty.new(self.model)
+
       case subject
-        when Property, Associations::Relationship then append_property_condition(subject, bind_value, operator)
-        when Symbol                               then append_symbol_condition(subject, bind_value, model, operator)
-        when String                               then append_string_condition(subject, bind_value, model, operator)
-        when Operator                             then append_operator_conditions(subject, bind_value, model)
-        when Path                                 then append_path(subject, bind_value, model, operator)
+        when Associations::Relationship,
+             Property   then append_property_condition(subject, bind_value, operator, path)
+        when Symbol     then append_symbol_condition(subject, bind_value, operator, path)
+        when String     then append_string_condition(subject, bind_value, operator, path)
+        when Operator   then append_operator_conditions(subject, bind_value)
+        when Path       then append_path(subject, bind_value, operator)
         else
           raise ArgumentError, "#{subject} is an invalid instance: #{subject.class}"
       end
@@ -1166,7 +1169,7 @@ module DataMapper
     end
 
     # @api private
-    def append_property_condition(subject, bind_value, operator)
+    def append_property_condition(subject, bind_value, operator, path)
       negated = operator == :not
 
       if operator == :eql || negated
@@ -1174,10 +1177,18 @@ module DataMapper
         if subject.respond_to?(:collection_for) && bind_value.nil?
           negated    = !negated
           bind_value = collection_for_nil(subject)
+        # TODO: test out hashes as bind values of Relationship and Path subjects
+        # elsif subject.respond_to?(:collection_for) && bind_value.is_a?(Hash)
+        #   bind_path = path.wrap(subject)
+        #   bind_value.each do |k,v|
+        #     append_condition(bind_path.send(k), v)
+        #   end
         end
 
         operator = equality_operator_for_type(bind_value)
       end
+
+      subject = path.wrap(subject)
 
       condition = Conditions::Comparison.new(operator, subject, bind_value)
 
@@ -1189,44 +1200,46 @@ module DataMapper
     end
 
     # @api private
-    def append_symbol_condition(symbol, bind_value, model, operator)
-      append_condition(symbol.to_s, bind_value, model, operator)
+    def append_symbol_condition(symbol, bind_value, operator, path)
+      append_condition(symbol.to_s, bind_value, operator, path)
     end
 
     # @api private
-    def append_string_condition(string, bind_value, model, operator)
+    def append_string_condition(string, bind_value, operator, path)
       if string.include?('.')
-        query_path = model
+        query_path = path
 
         target_components = string.split('.')
         last_component    = target_components.last
-        operator          = target_components.pop.to_sym if DataMapper::Query::Conditions::Comparison.slugs.any? { |slug| slug.to_s == last_component }
+        if Conditions::Comparison.slugs.any? { |slug| slug.to_s == last_component }
+          operator        = target_components.pop.to_sym
+        end
 
         target_components.each { |method| query_path = query_path.send(method) }
 
-        append_condition(query_path, bind_value, model, operator)
+        append_condition(query_path, bind_value, operator)
       else
         repository_name = repository.name
-        subject         = model.properties(repository_name)[string] ||
-                          model.relationships(repository_name)[string]
+        subject         = path.send(string)
 
-        append_condition(subject, bind_value, model, operator)
+        append_condition(subject, bind_value, operator)
       end
     end
 
     # @api private
-    def append_operator_conditions(operator, bind_value, model)
-      append_condition(operator.target, bind_value, model, operator.operator)
+    def append_operator_conditions(operator, bind_value)
+      append_condition(operator.target, bind_value, operator.operator)
     end
 
     # @api private
-    def append_path(path, bind_value, model, operator)
+    def append_path(path, bind_value, operator)
       path.relationships.each do |relationship|
         inverse = relationship.inverse
         @links.unshift(inverse) unless @links.include?(inverse)
       end
+      @paths[path.relationships] = true
 
-      append_condition(path.property, bind_value, path.model, operator)
+      append_condition(path.property, bind_value, operator, path)
     end
 
     # Add a condition to the Query

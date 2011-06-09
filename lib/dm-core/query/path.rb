@@ -74,6 +74,17 @@ module DataMapper
         @model.properties(@repository_name).named?(method)
       end
 
+      def wrap(subject)
+        case subject
+        when Associations::Relationship
+          Path.new(relationships + [subject])
+        when Property
+          Path.new(relationships, subject.name)
+        when Symbol, String
+          send(subject)
+        end
+      end
+
       private
 
       # @api semipublic
@@ -108,6 +119,15 @@ module DataMapper
         end
 
         raise NoMethodError, "undefined property or relationship '#{method}' on #{@model}"
+      end
+
+      class Empty < self
+      private
+        def initialize(model, property_name = nil)
+          @relationships    = []
+          @model            = model
+          @repository_name  = model.repository_name
+        end
       end
     end # class Path
   end # class Query
