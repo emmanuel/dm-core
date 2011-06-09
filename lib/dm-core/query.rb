@@ -1029,6 +1029,19 @@ module DataMapper
       end
     end
 
+    def paths
+      @paths ||= Set.new
+    end
+
+    def path_to(path)
+      relationships = path.respond_to?(:relationships) ? path.relationships : path
+      if relationships.any?
+        Path.new(path.relationships)
+      else
+        Path::Empty.new(model)
+      end
+    end
+
     # Normalize options
     #
     # @param [Array<Symbol>] options
@@ -1237,8 +1250,7 @@ module DataMapper
         inverse = relationship.inverse
         @links.unshift(inverse) unless @links.include?(inverse)
       end
-      @paths ||= Set.new
-      @paths << path.relationships
+      paths << path_to(path)
 
       append_condition(path.property, bind_value, operator, path)
     end
