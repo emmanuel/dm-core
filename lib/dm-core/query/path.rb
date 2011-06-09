@@ -61,7 +61,7 @@ module DataMapper
       #
       # @api semipublic
       def asc
-        Operator.new(property, :asc)
+        Operator.new(self, :asc)
       end
 
       # Used for creating :order options. This technique may be deprecated,
@@ -69,7 +69,7 @@ module DataMapper
       #
       # @api semipublic
       def desc
-        Operator.new(property, :desc)
+        Operator.new(self, :desc)
       end
 
       # @api semipublic
