@@ -1237,7 +1237,8 @@ module DataMapper
         inverse = relationship.inverse
         @links.unshift(inverse) unless @links.include?(inverse)
       end
-      @paths[path.relationships] = true
+      @paths ||= Set.new
+      @paths << path.relationships
 
       append_condition(path.property, bind_value, operator, path)
     end
