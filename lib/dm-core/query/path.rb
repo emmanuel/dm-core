@@ -20,22 +20,28 @@ module DataMapper
       equalize :relationships, :property
 
       # @api semipublic
-      attr_reader :repository_name
-
-      # @api semipublic
       attr_reader :relationships
 
       # @api semipublic
-      attr_reader :source_model
+      attr_reader :property
 
       # @api semipublic
-      attr_reader :target_model
+      def source_model
+        relationships.first.source_model
+      end
+
+      # @api semipublic
+      def target_model
+        relationships.last.target_model
+      end
 
       # @api semipublic
       alias_method :model, :target_model
 
       # @api semipublic
-      attr_reader :property
+      def repository_name
+        relationships.last.relative_target_repository_name
+      end
 
       (Conditions::Comparison.slugs | [ :not ]).each do |slug|
         class_eval <<-RUBY, __FILE__, __LINE__ + 1
@@ -61,6 +67,7 @@ module DataMapper
       #
       # @api semipublic
       def asc
+        # raise NoMethodError unless defined?(@property)
         Operator.new(self, :asc)
       end
 
@@ -69,6 +76,8 @@ module DataMapper
       #
       # @api semipublic
       def desc
+        # TODO: does a Direction support a Relationship arg?
+        # raise NoMethodError unless defined?(@property)
         Operator.new(self, :desc)
       end
 
@@ -80,82 +89,102 @@ module DataMapper
         target_model_properties.named?(method)
       end
 
-      def wrap(subject)
+      # @return [Query::Path]
+      #   Path with relationships only, no Property target
+      # 
+      # TODO: split @property out into a Path::Property subclass
+      def canonical
+        return self unless defined?(@property)
+
+        if relationships.any?
+          Path.new(relationships)
+        else
+          Path::Empty.new(source_model)
+        end
+      end
+
+      # @param [Associations::Relationship, Property, Symbol, String] subject
+      #   the subject to which the receiver should be extended to include
+      # 
+      # @return [Query::Path, NilClass]
+      #   A new path encompassing the receiver extended to the arg
+      #   if the arg is a Relationship, a new path is returned which includes it
+      #   if the arg is a Property, a new path is returned which targets it
+      #   if the arg is a Symbol or String, it is looked for,
+      #     first as a relationship name, second as a property name
+      #   If this all fails, nil is returned
+      def to(subject)
         case subject
         when Associations::Relationship
+          # TODO: don't assume +subject+ relationship is at the end of the path:
+          # return a shortened path if the relationship appears in the middle
           Path.new(relationships + [subject])
         when Property
-          Path.new(relationships, subject.name)
+          Path.new(relationships, subject)
         when Symbol, String
-          send(subject)
+          if relationship = target_model_relationships[method]
+            to(relationship)
+          elsif property = target_model_properties[method]
+            to(property)
+          end
         end
       end
 
     private
 
       # @api semipublic
-      def initialize(relationships, property_name = nil)
+      def initialize(relationships, property = nil)
         @relationships = relationships.to_ary.dup
 
-        first_relationship = @relationships.first
-        @source_model      = first_relationship.source_model
-
-        last_relationship = @relationships.last
-        @repository_name  = last_relationship.relative_target_repository_name
-        @target_model     = last_relationship.target_model
-
-        set_property(property_name)
-      end
-
-      def set_property(property_name)
-        if property_name
-          property_name = property_name.to_sym
-          @property = target_model_properties[property_name] ||
-            raise(ArgumentError, "Unknown property '#{property_name}' in #{@target_model}")
+        # TODO: split this out into a Query::Path::Property subclass
+        #   or perhaps a Query::PropertyPath which has-a Query::Path
+        if property
+          @property = 
+            if property.respond_to?(:model) && target_model == property.model
+              property
+            elsif model_property = target_model_properties[property]
+              model_property
+            else
+              raise(ArgumentError, "Unknown property '#{property}' in #{target_model}")
+            end
         end
-        self
       end
 
       def target_model_relationships
-        @target_model.relationships(@repository_name)
+        target_model.relationships(repository_name)
       end
 
       def target_model_properties
-        @target_model.properties(@repository_name)
+        target_model.properties(repository_name)
       end
 
       # @api semipublic
       def method_missing(method, *args)
-        if @property
-          return @property.send(method, *args)
+        if defined?(@property)
+          property.send(method, *args) 
+        elsif path = to(method)
+          path
+        else
+          raise NoMethodError, "undefined property or relationship '#{subject}' on #{target_model}"
         end
-
-        path_class = self.class
-
-        if relationship = target_model_relationships[method]
-          return path_class.new(@relationships.dup << relationship)
-        end
-
-        if target_model_properties.named?(method)
-          return path_class.new(@relationships, method)
-        end
-
-        raise NoMethodError, "undefined property or relationship '#{method}' on #{@target_model}"
       end
 
       class Empty < self
         # Path::Empty is for subjects on the source Model itself,
         # so the target_model and source_model are the same
-        alias_method :source_model, :target_model
+        attr_reader :model
+        alias_method :source_model, :model
+        alias_method :target_model, :model
+
+        attr_reader :repository_name
 
       private
 
         def initialize(model, property_name = nil)
-          @relationships   = []
-          @target_model    = model
-          @repository_name = model.repository_name
+          super([], property_name)
 
-          set_property(property_name)
+          @model           = model
+          @repository_name = model.repository_name
         end
       end
     end # class Path

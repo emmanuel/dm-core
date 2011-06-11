@@ -1014,6 +1014,7 @@ module DataMapper
       conditions.each do |condition|
         case condition
           when Conditions::AbstractOperation, Conditions::AbstractComparison
+            # TODO: qualify these Operations/Comparisons to target Path::Empty
             add_condition(condition)
 
           when Hash
@@ -1029,17 +1030,9 @@ module DataMapper
       end
     end
 
+    # The Set of Query::Paths that this Query's conditions are concerned with
     def paths
       @paths ||= Set.new
-    end
-
-    def path_to(path)
-      relationships = path.respond_to?(:relationships) ? path.relationships : path
-      if relationships.any?
-        Path.new(path.relationships)
-      else
-        Path::Empty.new(model)
-      end
     end
 
     # Normalize options
@@ -1067,23 +1060,17 @@ module DataMapper
       @order = @order.map do |order|
         case order
           when Operator
-            target   = order.target
-            property = target.kind_of?(Property) ? target : @properties[target]
+            target = order.target
+            path = empty_path.to(target) or
+              raise ArgumentError, "invalid Operator target: #{target.inspect}"
 
-            Direction.new(property, order.operator)
-
-          when Symbol, String
-            Direction.new(@properties[order])
-
-          when Property
-            Direction.new(order)
-
+            Direction.new(path, order.operator)
+          when Symbol, String, Property
+            Direction.new(empty_path.to(order))
           when Direction
             order.dup
-
           when Path
-            Direction.new(order.property)
-
+            Direction.new(order)
         end
       end
     end
@@ -1141,6 +1128,10 @@ module DataMapper
       @unique = links.any? unless @options.key?(:unique)
     end
 
+    def empty_path
+      Path::Empty.new(self.model)
+    end
+
     # Append conditions to this Query
     #
     #   TODO: needs example
@@ -1156,8 +1147,7 @@ module DataMapper
     #   the Query conditions
     #
     # @api private
-    def append_condition(subject, bind_value, operator = :eql, path = nil)
-      path ||= Path::Empty.new(self.model)
+    def append_condition(subject, bind_value, operator = :eql, path = empty_path)
 
       case subject
         when Associations::Relationship,
@@ -1192,7 +1182,7 @@ module DataMapper
           bind_value = collection_for_nil(subject)
         # TODO: test out hashes as bind values of Relationship and Path subjects
         # elsif subject.respond_to?(:collection_for) && bind_value.is_a?(Hash)
-        #   bind_path = path.wrap(subject)
+        #   bind_path = path.to(subject)
         #   bind_value.each do |k,v|
         #     append_condition(bind_path.send(k), v)
         #   end
@@ -1201,7 +1191,7 @@ module DataMapper
         operator = equality_operator_for_type(bind_value)
       end
 
-      subject = path.wrap(subject)
+      subject = path.to(subject)
 
       condition = Conditions::Comparison.new(operator, subject, bind_value)
 
@@ -1250,7 +1240,7 @@ module DataMapper
         inverse = relationship.inverse
         @links.unshift(inverse) unless @links.include?(inverse)
       end
-      paths << path_to(path)
+      paths << path.canonical
 
       append_condition(path.property, bind_value, operator, path)
     end
