@@ -794,7 +794,7 @@ module DataMapper
 
       model = self.model
 
-      # TODO: shouldn't this be scoped by @repository.name (eg., @properties)?
+      # TODO: shouldn't this be scoped by @repository.name (like @properties)?
       valid_properties = model.properties
 
       model.descendants.each do |descendant|
@@ -842,6 +842,11 @@ module DataMapper
             #unless @relationships.value?(link)
             #  raise ArgumentError, "+options[:links]+ entry #{link.name.inspect} does not map to a relationship in #{model}"
             #end
+            # 
+            # Perhaps:
+            #   paths.any? { |path| path.include?(link) }
+            # Or would it be:
+            #   paths.any? { |path| path.include?(link.inverse) }
 
           else
             raise ArgumentError, "+options[:links]+ entry #{link.inspect} of an unsupported object #{link.class}"
@@ -964,7 +969,7 @@ module DataMapper
             # that has been included via the :links option
 
             # TODO: figure out a way to validate Properties on other models, ex:
-            # path_present = paths.any? { |path| path.to(order_entry) }
+            # path_present = paths.any? { |path| path.to(order_entry) rescue false }
             # path_present or raise ArgumentError, "no path to #{order_entry.inspect} could be found"
 
           when Path
@@ -1086,8 +1091,10 @@ module DataMapper
         case order
           when Operator
             target = order.target
-            path = empty_path.to(target) or
+            path = target.is_a?(Path) ? target : empty_path.to(target)
+            unless path
               raise ArgumentError, "invalid Operator target: #{target.inspect}"
+            end
 
             Direction.new(path, order.operator)
           when Symbol, String, Property
@@ -1159,6 +1166,7 @@ module DataMapper
     end
 
     # The empty path for this Query: used for all unqualified Operations/Conditions
+    # TODO: replace `Path::Empty` with `Path.new(self_relationship)`?
     def empty_path
       Path::Empty.new(self.model)
     end
@@ -1211,7 +1219,15 @@ module DataMapper
         if subject.respond_to?(:collection_for) && bind_value.nil?
           negated    = !negated
           bind_value = collection_for_nil(subject)
-        # TODO: test out hashes as bind values of Relationship and Path subjects
+        # TODO: test out hashes as bind values of Relationship and Path subjects:
+        # @example:
+        #   Author.all(Author.posts.comments => { :body.match => /spam/, :created_at.lt => 1.day.ago })
+        # 
+        #   post_comments = Author.relationships[:post_comments]
+        #   Author.all(post_comments => { :body.match => /spam/, :created_at.lt => 1.day.ago })
+        # 
+        # Something like this:
+        # 
         # elsif subject.respond_to?(:collection_for) && bind_value.is_a?(Hash)
         #   bind_path = path.to(subject)
         #   bind_value.each do |k,v|
