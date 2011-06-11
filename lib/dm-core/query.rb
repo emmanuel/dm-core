@@ -726,6 +726,13 @@ module DataMapper
 
       assert_valid_options(@options)
 
+      # TODO: add default properties of descendants to @fields:
+      # @fields       = @options.fetch(:fields) do
+      #   @properties.defaults | model.descendants.map do |m|
+      #     p.properties(repository_name).defaults
+      #   end.flatten
+      # end
+
       @fields       = @options.fetch :fields,       @properties.defaults
       @links        = @options.key?(:links) ? @options[:links].dup : []
       @conditions   = Conditions::Operation.new(:null)
@@ -787,6 +794,7 @@ module DataMapper
 
       model = self.model
 
+      # TODO: shouldn't this be scoped by @repository.name (eg., @properties)?
       valid_properties = model.properties
 
       model.descendants.each do |descendant|
@@ -855,9 +863,9 @@ module DataMapper
               when Symbol, ::String
                 original = subject
                 subject  = subject.to_s
-                name     = subject[0, subject.index('.') || subject.length]
+                name     = subject.split(".").first
 
-                unless @properties.named?(name) || @relationships.named?(name)
+                unless empty_path.to(name)
                   raise ArgumentError, "condition #{original.inspect} does not map to a property or relationship in #{model}"
                 end
 
@@ -876,7 +884,7 @@ module DataMapper
                 assert_valid_conditions(subject.target => bind_value)
 
               when Path
-                assert_valid_links(subject.relationships)
+                assert_valid_links(subject.relationships) if subject.relationships.any?
 
               when Associations::Relationship
                 # TODO: validate that it belongs to the current model
@@ -951,9 +959,16 @@ module DataMapper
               raise ArgumentError, "+options[:order]+ entry #{order_entry.inspect} does not map to a property in #{model}"
             end
 
-          when Property, Path
+          when Property
             # Allow any arbitrary property, since it may map to a model
             # that has been included via the :links option
+
+            # TODO: figure out a way to validate Properties on other models, ex:
+            # path_present = paths.any? { |path| path.to(order_entry) }
+            # path_present or raise ArgumentError, "no path to #{order_entry.inspect} could be found"
+
+          when Path
+            assert_valid_path(order_entry)
 
           when Operator, Direction
             operator = order_entry.operator
@@ -962,11 +977,26 @@ module DataMapper
               raise ArgumentError, "+options[:order]+ entry #{order_entry.inspect} used an invalid operator #{operator}"
             end
 
-            assert_valid_order([ order_entry.target ], fields)
+            target = order_entry.target
+            path = target.is_a?(Path) ? target : empty_path.to(target)
+
+            unless path
+              raise ArgumentError, "+options[:order]+ entry #{order_entry.inspect} path to target cannot be found"
+            end
+
+            assert_valid_order([ path ], fields)
 
           else
             raise ArgumentError, "+options[:order]+ entry #{order_entry.inspect} of an unsupported object #{order_entry.class}"
         end
+      end
+    end
+
+    def assert_valid_path(path)
+      model = self.model
+
+      unless model == path.source_model
+        raise ArgumentError, "path does not originate at #{model}"
       end
     end
 
@@ -1028,11 +1058,6 @@ module DataMapper
             @raw = true
         end
       end
-    end
-
-    # The Set of Query::Paths that this Query's conditions are concerned with
-    def paths
-      @paths ||= Set.new
     end
 
     # Normalize options
@@ -1128,6 +1153,12 @@ module DataMapper
       @unique = links.any? unless @options.key?(:unique)
     end
 
+    # The Set of Query::Paths that this Query's conditions are concerned with
+    def paths
+      @paths ||= Set.new
+    end
+
+    # The empty path for this Query: used for all unqualified Operations/Conditions
     def empty_path
       Path::Empty.new(self.model)
     end
@@ -1147,7 +1178,7 @@ module DataMapper
     #   the Query conditions
     #
     # @api private
-    def append_condition(subject, bind_value, operator = :eql, path = empty_path)
+    def append_condition(subject, bind_value, operator = :eql, path = self.empty_path)
 
       case subject
         when Associations::Relationship,
@@ -1210,22 +1241,20 @@ module DataMapper
     # @api private
     def append_string_condition(string, bind_value, operator, path)
       if string.include?('.')
-        query_path = path
-
         target_components = string.split('.')
         last_component    = target_components.last
         if Conditions::Comparison.slugs.any? { |slug| slug.to_s == last_component }
           operator        = target_components.pop.to_sym
         end
 
-        target_components.each { |method| query_path = query_path.send(method) }
+        target_components.each { |method| path = path.to(method) }
 
-        append_condition(query_path, bind_value, operator)
+        append_condition(path, bind_value, operator)
       else
-        repository_name = repository.name
-        subject         = path.send(string)
-
-        append_condition(subject, bind_value, operator)
+        # TODO: this was using the repository of the Query's target model.
+        # now it's using the repository of the Path's target model.
+        # Is that a problem?
+        append_condition(path.to(string), bind_value, operator)
       end
     end
 

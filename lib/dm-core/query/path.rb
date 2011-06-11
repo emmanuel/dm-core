@@ -6,6 +6,10 @@
 
 module DataMapper
   class Query
+    # Path is a vector from a source model through a chain of relationships
+    # terminating at a target model. It may optionally include a Property on
+    # the target model
+
     class Path
       # TODO: replace this with BasicObject
       instance_methods.each do |method|
@@ -120,6 +124,7 @@ module DataMapper
           # return a shortened path if the relationship appears in the middle
           Path.new(relationships + [subject])
         when Property
+          # TODO: separate this out into Path::Property
           Path.new(relationships, subject)
         when Symbol, String
           if relationship = target_model_relationships[method]
