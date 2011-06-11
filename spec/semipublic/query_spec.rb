@@ -723,7 +723,10 @@ describe DataMapper::Query do
         it { @return.should be_kind_of(DataMapper::Query) }
 
         it 'should set the conditions' do
-          @return.conditions.should == DataMapper::Query::Conditions::Operation.new(:and, [ 'name = ?', [ 'Dan Kubb' ] ])
+          @return.conditions.should ==
+            DataMapper::Query::Conditions::Operation.new(:and,
+              [ 'name = ?', [ 'Dan Kubb' ] ]
+            )
         end
 
         it 'should be valid' do
