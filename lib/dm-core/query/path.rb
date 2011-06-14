@@ -31,12 +31,12 @@ module DataMapper
 
       # @api semipublic
       def source_model
-        relationships.first.source_model
+        @relationships.first.source_model
       end
 
       # @api semipublic
       def target_model
-        relationships.last.target_model
+        @relationships.last.target_model
       end
 
       # @api semipublic
@@ -44,7 +44,7 @@ module DataMapper
 
       # @api semipublic
       def repository_name
-        relationships.last.relative_target_repository_name
+        @relationships.last.relative_target_repository_name
       end
 
       (Conditions::Comparison.slugs | [ :not ]).each do |slug|
@@ -71,8 +71,9 @@ module DataMapper
       #
       # @api semipublic
       def asc
+        # TODO: can we break the semipublic api and init the Operator with self?
         # raise NoMethodError unless defined?(@property)
-        Operator.new(self, :asc)
+        Operator.new(@property, :asc)
       end
 
       # Used for creating :order options. This technique may be deprecated,
@@ -80,9 +81,9 @@ module DataMapper
       #
       # @api semipublic
       def desc
-        # TODO: does a Direction support a Relationship arg?
+        # TODO: can we break the semipublic api and init the Operator with self?
         # raise NoMethodError unless defined?(@property)
-        Operator.new(self, :desc)
+        Operator.new(@property, :desc)
       end
 
       # @api semipublic
@@ -100,8 +101,8 @@ module DataMapper
       def canonical
         return self unless defined?(@property)
 
-        if relationships.any?
-          Path.new(relationships)
+        if @relationships.any?
+          Path.new(@relationships)
         else
           Path::Empty.new(source_model)
         end
@@ -122,14 +123,26 @@ module DataMapper
         when Associations::Relationship
           # TODO: don't assume +subject+ relationship is at the end of the path:
           # return a shortened path if the relationship appears in the middle
-          Path.new(relationships + [subject])
+          if target_model_relationships.named?(subject.name)
+            Path.new(@relationships + [subject])
+          else
+            # TODO: assumes +subject+ relationship is at the end of the path:
+            #   instead return a shortened path if the relationship appears in
+            #   the middle of the receiver path
+            # OR raise an error if subject does not appear at any in this path
+          end
         when Property
           # TODO: separate this out into Path::Property
-          Path.new(relationships, subject)
+          if target_model_properties.named?(subject.name)
+            Path.new(@relationships, subject)
+          else
+            # TODO: fail usefully if +subject+ is a Property
+            # but not in target_model_properties
+          end
         when Symbol, String
-          if relationship = target_model_relationships[method]
+          if relationship = target_model_relationships[subject]
             to(relationship)
-          elsif property = target_model_properties[method]
+          elsif property = target_model_properties[subject]
             to(property)
           end
         end
@@ -139,19 +152,22 @@ module DataMapper
 
       # @api semipublic
       def initialize(relationships, property = nil)
-        @relationships = relationships.to_ary.dup
+        @relationships = relationships.to_ary.map { |r|
+          relationship.respond_to?(:links) ? relationship.links : relationship
+        }.flatten.freeze
 
         # TODO: split this out into a Query::Path::Property subclass
         #   or perhaps a Query::PropertyPath which has-a Query::Path
         if property
-          @property = 
-            if property.respond_to?(:model) && target_model == property.model
-              property
-            elsif model_property = target_model_properties[property]
-              model_property
-            else
-              raise(ArgumentError, "Unknown property '#{property}' in #{target_model}")
-            end
+          # TODO: verify that the given property actually belongs to the target
+          #   model. This is complicated by STI (base_model, etc.)
+          name = property.respond_to?(:name) ? property.name : property
+          @property = target_model_properties[name]
+
+          unless @property
+            output = property.respond_to?(:name) ? property.inspect : property
+            raise(ArgumentError, "Unknown property '#{output}' in #{target_model}")
+          end
         end
       end
 
@@ -160,17 +176,17 @@ module DataMapper
       end
 
       def target_model_properties
-        target_model.properties(repository_name)
+        target_model.base_model.properties_with_subclasses(repository_name)
       end
 
       # @api semipublic
       def method_missing(method, *args)
         if defined?(@property)
-          property.send(method, *args) 
+          property.send(method, *args)
         elsif path = to(method)
           path
         else
-          raise NoMethodError, "undefined property or relationship '#{subject}' on #{target_model}"
+          raise NoMethodError, "undefined property or relationship '#{method}' on #{target_model}"
         end
       end
 
@@ -178,18 +194,41 @@ module DataMapper
         # Path::Empty is for subjects on the source Model itself,
         # so the target_model and source_model are the same
         attr_reader :model
-        alias_method :source_model, :model
-        alias_method :target_model, :model
 
-        attr_reader :repository_name
+        def repository_name
+          model.repository_name
+        end
+
+        # @api semipublic
+        def source_model
+          model
+        end
+
+        # @api semipublic
+        def target_model
+          model
+        end
+
+        def to(subject)
+          case subject
+          when Property
+            # TODO: separate this out into Path::Property
+            if target_model_properties.named?(subject.name)
+              Path::Empty.new(model, subject)
+            else
+              # +subject+ is not a property of +target_model+; raise an exception?
+            end
+          else
+            super
+          end
+        end
 
       private
 
         def initialize(model, property_name = nil)
-          super([], property_name)
+          @model = model
 
-          @model           = model
-          @repository_name = model.repository_name
+          super([], property_name)
         end
       end
     end # class Path

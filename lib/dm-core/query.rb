@@ -175,7 +175,34 @@ module DataMapper
     #   the conditions that will be used to scope the results
     #
     # @api semipublic
-    attr_reader :conditions
+    # attr_reader :conditions
+    def qualified_conditions
+      @conditions
+    end
+
+    def conditions
+      # debugger
+      unqualify_conditions(@conditions)
+    end
+
+    def unqualify_conditions(predicate)
+      return predicate unless predicate.respond_to?(:slug)
+
+      case predicate.slug
+      when *Conditions::Operation.slugs # :and, :or, :not, :null
+        operands = predicate.operands.map { |o| unqualify_conditions(o) }
+        Conditions::Operation.new(predicate.slug, *operands)
+      # :eql, :in, :regexp, :like, :gt, :lt, :gte, :lte
+      when *Conditions::Comparison.slugs
+        subject = predicate.subject
+        if subject.kind_of?(Path)
+          subject = subject.property ? subject.property : subject.relationships.last
+        else
+          # raise ArgumentError, "unqualified predicate: #{predicate.inspect}"
+        end
+        Conditions::Comparison.new(predicate.slug, subject, predicate.value)
+      end
+    end
 
     # Returns the offset query uses
     #
@@ -220,7 +247,32 @@ module DataMapper
     #   the order of results
     #
     # @api semipublic
-    attr_reader :order
+    # attr_reader :order
+    def pathed_order
+      @order
+    end
+
+    def order
+      Array(@order).map { |o| unpathed_order(o) }
+    end
+
+    def unpathed_order(operator)
+      return operator unless operator.respond_to?(:operator)
+      op = operator.operator
+
+      case op
+      when :asc, :desc
+        subject = operator.target
+
+        if subject.kind_of?(Path)
+          subject = subject.property ? subject.property : subject.relationships.last
+        else
+          # raise ArgumentError, "unqualified operator: #{operator.inspect}"
+        end
+
+        Direction.new(subject, op)
+      end
+    end
 
     # Returns the original options
     #
@@ -728,9 +780,7 @@ module DataMapper
 
       # TODO: add default properties of descendants to @fields:
       # @fields       = @options.fetch(:fields) do
-      #   @properties.defaults | model.descendants.map do |m|
-      #     p.properties(repository_name).defaults
-      #   end.flatten
+      #   @model.base_model.properties_with_subclasses.defaults
       # end
 
       @fields       = @options.fetch :fields,       @properties.defaults
@@ -983,13 +1033,22 @@ module DataMapper
             end
 
             target = order_entry.target
-            path = target.is_a?(Path) ? target : empty_path.to(target)
+            pathed = 
+              if target.kind_of?(Path)
+                paths << target.canonical
+                target
+              # TODO: fix this and only allow Path, not unpathed Property
+              elsif target.kind_of?(Property)
+                target
+              else
+                empty_path.to(target)
+              end
 
-            unless path
-              raise ArgumentError, "+options[:order]+ entry #{order_entry.inspect} path to target cannot be found"
+            unless pathed
+              raise ArgumentError, "+options[:order]+ entry #{target.inspect} path cannot be found from #{self.model}"
             end
 
-            assert_valid_order([ path ], fields)
+            assert_valid_order([ pathed ], fields)
 
           else
             raise ArgumentError, "+options[:order]+ entry #{order_entry.inspect} of an unsupported object #{order_entry.class}"
@@ -1049,8 +1108,8 @@ module DataMapper
       conditions.each do |condition|
         case condition
           when Conditions::AbstractOperation, Conditions::AbstractComparison
-            # TODO: qualify these Operations/Comparisons to target Path::Empty
-            add_condition(condition)
+            qualified_condition = qualify_condition(condition)
+            add_condition(qualified_condition)
 
           when Hash
             condition.each { |kv| append_condition(*kv) }
@@ -1062,6 +1121,28 @@ module DataMapper
             add_condition(raw_condition)
             @raw = true
         end
+      end
+    end
+
+    # Given a tree of conditions, return a corresponding tree such that the
+    # subject of each Comparison in the returned tree is a Query::Path
+    # 
+    # @api private
+    def qualify_condition(predicate)
+      case predicate
+      when Conditions::AbstractOperation
+        operation = Conditions::Operation.new(predicate.slug)
+        predicate.operands.inject(operation) do |operation, operand|
+          operation << qualify_condition(operand)
+        end
+      when Conditions::AbstractComparison
+        if path = empty_path.to(predicate.subject)
+          Conditions::Comparison.new(predicate.slug, path, predicate.value)
+        else
+          raise ArgumentError, "could not qualify predicate #{predicate.inspect} in path #{empty_path.inspect}"
+        end
+      else
+        raise "unexpected predicate type: #{predicate.inspect}"
       end
     end
 
@@ -1091,18 +1172,31 @@ module DataMapper
         case order
           when Operator
             target = order.target
-            path = target.is_a?(Path) ? target : empty_path.to(target)
-            unless path
+            target =
+              if target.kind_of?(Path)
+                paths << target.canonical
+                target
+              elsif target.kind_of?(Property)
+                target
+              else
+                empty_path.to(target)
+              end
+
+            unless target
               raise ArgumentError, "invalid Operator target: #{target.inspect}"
             end
 
-            Direction.new(path, order.operator)
-          when Symbol, String, Property
-            Direction.new(empty_path.to(order))
+            Direction.new(target, order.operator)
+          when Property # TODO: normalize this to a path (change the recent semipublic api)
+            Direction.new(order)
           when Direction
+            # TODO: normalize this to a Path
             order.dup
           when Path
+            paths << order.canonical
             Direction.new(order)
+          when Symbol, String
+            Direction.new(empty_path.to(order))
         end
       end
     end
@@ -1186,7 +1280,7 @@ module DataMapper
     #   the Query conditions
     #
     # @api private
-    def append_condition(subject, bind_value, operator = :eql, path = self.empty_path)
+    def append_condition(subject, bind_value, operator = :eql, path = empty_path)
 
       case subject
         when Associations::Relationship,
@@ -1238,7 +1332,8 @@ module DataMapper
         operator = equality_operator_for_type(bind_value)
       end
 
-      subject = path.to(subject)
+      # raise path.inspect
+      # subject = path.to(subject)
 
       condition = Conditions::Comparison.new(operator, subject, bind_value)
 
@@ -1285,9 +1380,15 @@ module DataMapper
         inverse = relationship.inverse
         @links.unshift(inverse) unless @links.include?(inverse)
       end
-      paths << path.canonical
 
-      append_condition(path.property, bind_value, operator, path)
+      paths << path.canonical
+      subject = path.property ? path.property : path.relationships.last
+
+      unless subject
+        raise ArgumentError, "no path endpoint found: #{path.inspect}"
+      end
+
+      append_condition(subject, bind_value, operator, path)
     end
 
     # Add a condition to the Query
