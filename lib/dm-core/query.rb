@@ -177,12 +177,33 @@ module DataMapper
     # @api semipublic
     # attr_reader :conditions
     def qualified_conditions
-      @conditions
+      qualify_conditions(@conditions)
     end
 
     def conditions
-      # debugger
       unqualify_conditions(@conditions)
+    end
+
+    # Given a tree of conditions, return a corresponding tree such that the
+    # subject of each Comparison in the returned tree is a Query::Path
+    # 
+    # @api private
+    def qualify_conditions(predicate)
+      case predicate
+      when Conditions::AbstractOperation
+        operation = Conditions::Operation.new(predicate.slug)
+        predicate.operands.inject(operation) do |operation, operand|
+          operation << qualify_conditions(operand)
+        end
+      when Conditions::AbstractComparison
+        if path = empty_path.to(predicate.subject)
+          Conditions::Comparison.new(predicate.slug, path, predicate.value)
+        else
+          raise ArgumentError, "could not qualify predicate #{predicate.inspect} in path #{empty_path.inspect}"
+        end
+      else
+        raise "unexpected predicate type: #{predicate.inspect}"
+      end
     end
 
     def unqualify_conditions(predicate)
@@ -1108,7 +1129,7 @@ module DataMapper
       conditions.each do |condition|
         case condition
           when Conditions::AbstractOperation, Conditions::AbstractComparison
-            qualified_condition = qualify_condition(condition)
+            qualified_condition = qualify_conditions(condition)
             add_condition(qualified_condition)
 
           when Hash
@@ -1121,28 +1142,6 @@ module DataMapper
             add_condition(raw_condition)
             @raw = true
         end
-      end
-    end
-
-    # Given a tree of conditions, return a corresponding tree such that the
-    # subject of each Comparison in the returned tree is a Query::Path
-    # 
-    # @api private
-    def qualify_condition(predicate)
-      case predicate
-      when Conditions::AbstractOperation
-        operation = Conditions::Operation.new(predicate.slug)
-        predicate.operands.inject(operation) do |operation, operand|
-          operation << qualify_condition(operand)
-        end
-      when Conditions::AbstractComparison
-        if path = empty_path.to(predicate.subject)
-          Conditions::Comparison.new(predicate.slug, path, predicate.value)
-        else
-          raise ArgumentError, "could not qualify predicate #{predicate.inspect} in path #{empty_path.inspect}"
-        end
-      else
-        raise "unexpected predicate type: #{predicate.inspect}"
       end
     end
 
