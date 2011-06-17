@@ -37,9 +37,9 @@ module DataMapper
     #
     # @param [Array, Collection, Resource] source
     #   the source to extract the values from
-    # @param [ProperySet] source_key
+    # @param [PropertySet] source_key
     #   the key to extract the value from the resource
-    # @param [ProperySet] target_key
+    # @param [PropertySet] target_key
     #   the key to match the resource with
     #
     # @return [AbstractComparison, AbstractOperation]
