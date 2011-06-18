@@ -125,6 +125,8 @@ module DataMapper
           # return a shortened path if the relationship appears in the middle
           if target_model_relationships.named?(subject.name)
             Path.new(@relationships + [subject])
+          elsif target_model_relationships.any? { |r| r.target_model == subject.target_model }
+            raise "attempting to path to #{subject.inspect}"
           else
             # TODO: assumes +subject+ relationship is at the end of the path:
             #   instead return a shortened path if the relationship appears in
