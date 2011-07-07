@@ -27,6 +27,15 @@ describe DataMapper::Property do
       property :format,       String, :default => 'jpeg'
       property :taken_at,     Time,   :default => proc { Time.now }
     end
+
+    class ::WithCPKAndSeparateUniqueIndex
+      include DataMapper::Resource
+
+      property :pk_part_1,    String,   :key => true
+      property :pk_part_2,    Integer,  :key => true, :unique_index => :other
+      property :other,        DateTime,               :unique_index => :other
+    end
+
     DataMapper.finalize
   end
 
@@ -321,6 +330,13 @@ describe DataMapper::Property do
 
       it 'returns :key when property is a key' do
         Track.properties[:id].unique_index.should == :key
+      end
+
+      describe 'when a property is part of both a CPK and a unique index :other' do
+        it 'returns :key, :separate' do
+          property = WithCPKAndSeparateUniqueIndex.properties[:pk_part_2]
+          property.unique_index.should == [:key, :other]
+        end
       end
     end
 
