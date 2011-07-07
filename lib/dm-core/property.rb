@@ -759,7 +759,7 @@ module DataMapper
       @allow_nil    = @options.fetch(:allow_nil,    !@required)
       @allow_blank  = @options.fetch(:allow_blank,  !@required)
       @index        = @options.fetch(:index,        false)
-      @unique_index = @options.fetch(:unique_index, @unique)
+      @unique_index = Property.extract_unique_index(@options, @key, @unique)
       @lazy         = @options.fetch(:lazy,         false) && !@key
 
       determine_visibility
@@ -832,6 +832,11 @@ module DataMapper
 
       @reader_visibility = @options.fetch(:reader, default_accessor)
       @writer_visibility = @options.fetch(:writer, default_accessor)
+    end
+
+    def self.extract_unique_index(options, key, unique)
+      unique_index = Array(options.fetch(:unique_index, unique))
+      unique_index = [:key] + unique_index  if key && !unique_index.include?(:key)
     end
   end # class Property
 end
