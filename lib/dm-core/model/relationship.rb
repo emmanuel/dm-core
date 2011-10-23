@@ -1,3 +1,6 @@
+require 'dm-core/associations/relationship'
+require 'dm-core/model/relationship_accessor_module'
+
 # TODO: update Model#respond_to? to return true if method_method missing
 # would handle the message
 
@@ -129,8 +132,7 @@ module DataMapper
           descendant.relationships(repository_name) << relationship
         end
 
-        create_relationship_reader(relationship)
-        create_relationship_writer(relationship)
+        relationship_module.define_relationship_accessors_for(relationship)
 
         relationship
       end
@@ -183,8 +185,7 @@ module DataMapper
           descendant.relationships(repository_name) << relationship
         end
 
-        create_relationship_reader(relationship)
-        create_relationship_writer(relationship)
+        relationship_module.define_relationship_accessors_for(relationship)
 
         relationship
       end
@@ -309,58 +310,10 @@ module DataMapper
       # @api private
       def relationship_module
         @relationship_module ||= begin
-          mod = Module.new
-          class_eval do
-            include mod
-          end
+          mod = RelationshipAccessorModule.new(self.name)
+          include mod
           mod
         end
-      end
-
-      # Dynamically defines reader method
-      #
-      # @api private
-      def create_relationship_reader(relationship)
-        name        = relationship.name
-        reader_name = name.to_s
-
-        return if method_defined?(reader_name)
-
-        reader_visibility = relationship.reader_visibility
-
-        relationship_module.module_eval <<-RUBY, __FILE__, __LINE__ + 1
-          #{reader_visibility}
-          def #{reader_name}(query = nil)
-            # TODO: when no query is passed in, return the results from
-            #       the ivar directly. This will require that the ivar
-            #       actually hold the resource/collection, and in the case
-            #       of 1:1, the underlying collection is hidden in a
-            #       private ivar, and the resource is in a known ivar
-
-            persistence_state.get(relationships[#{name.inspect}], query)
-          end
-        RUBY
-      end
-
-      # Dynamically defines writer method
-      #
-      # @api private
-      def create_relationship_writer(relationship)
-        name        = relationship.name
-        writer_name = "#{name}="
-
-        return if method_defined?(writer_name)
-
-        writer_visibility = relationship.writer_visibility
-
-        relationship_module.module_eval <<-RUBY, __FILE__, __LINE__ + 1
-          #{writer_visibility}
-          def #{writer_name}(target)
-            relationship = relationships[#{name.inspect}]
-            self.persistence_state = persistence_state.set(relationship, target)
-            persistence_state.get(relationship)
-          end
-        RUBY
       end
 
       # @api public
