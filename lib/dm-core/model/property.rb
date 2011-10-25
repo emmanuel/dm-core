@@ -1,5 +1,6 @@
 require 'dm-core/property'
 require 'dm-core/property/lookup'
+require 'dm-core/model/repository_property_set'
 require 'dm-core/model/property_accessor_module'
 
 # TODO: update Model#respond_to? to return true if method_method missing
@@ -12,12 +13,14 @@ module DataMapper
 
       def self.extended(model)
         model.instance_variable_set(:@properties,               {})
+        # model.instance_variable_set(:@properties,               RepositoryPropertySet.new(model))
         model.instance_variable_set(:@field_naming_conventions, {})
       end
 
 
       def inherited(model)
         model.instance_variable_set(:@properties,               {})
+        # model.instance_variable_set(:@properties,               RepositoryPropertySet.new(model))
         model.instance_variable_set(:@field_naming_conventions, @field_naming_conventions.dup)
 
         @properties.each do |repository_name, properties|
